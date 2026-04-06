@@ -16,7 +16,7 @@ import { startTrendingAutoSync } from "./services/trendingIngestionService.js";
 const app = express();
 const isVercel = process.env.VERCEL === "1";
 
-connectDB();
+const dbReadyPromise = connectDB();
 if (!isVercel) {
   startTrendingAutoSync();
 }
@@ -42,6 +42,14 @@ app.use(
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(generalLimiter);
+app.use(async (req, res, next) => {
+  try {
+    await dbReadyPromise;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/research", researchRoutes);

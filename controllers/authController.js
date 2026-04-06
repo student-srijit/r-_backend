@@ -54,6 +54,12 @@ export const register = async (req, res, next) => {
       },
     });
   } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.email) {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        message: 'Email already registered',
+      });
+    }
     next(error);
   }
 };
