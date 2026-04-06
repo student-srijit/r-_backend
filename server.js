@@ -16,6 +16,23 @@ import { startTrendingAutoSync } from "./services/trendingIngestionService.js";
 const app = express();
 const isVercel = process.env.VERCEL === "1";
 
+function normalizeOrigin(value) {
+  if (!value) return "";
+
+  try {
+    return new URL(value).origin;
+  } catch {
+    return String(value).trim().replace(/\/+$/, "");
+  }
+}
+
+const allowedFrontendOrigins = new Set(
+  `${config.server.frontendUrl || ""},${process.env.FRONTEND_URLS || ""}`
+    .split(",")
+    .map((value) => normalizeOrigin(value))
+    .filter(Boolean),
+);
+
 const dbReadyPromise = connectDB();
 if (!isVercel) {
   startTrendingAutoSync();
@@ -25,15 +42,19 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(
   cors({
     origin: (origin, callback) => {
+      const requestOrigin = normalizeOrigin(origin);
+
       // Allow requests with no origin (mobile apps, curl) and chrome extensions
       if (
         !origin ||
         origin.startsWith("chrome-extension://") ||
-        origin === config.server.frontendUrl
+        allowedFrontendOrigins.has(requestOrigin)
       ) {
         callback(null, true);
       } else {
-        callback(new Error("Not allowed by CORS"));
+        const corsError = new Error("Not allowed by CORS");
+        corsError.status = 403;
+        callback(corsError);
       }
     },
     credentials: true,
