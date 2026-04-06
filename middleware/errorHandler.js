@@ -3,7 +3,8 @@ import { HTTP_STATUS } from '../utils/constants.js';
 export const errorHandler = (err, req, res, next) => {
   console.error('Error:', err);
 
-  const status = err.status || HTTP_STATUS.INTERNAL_SERVER_ERROR;
+  const status =
+    err.status || err.statusCode || HTTP_STATUS.INTERNAL_SERVER_ERROR;
   const message = err.message || 'Internal server error';
 
   res.status(status).json({
