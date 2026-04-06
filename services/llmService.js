@@ -40,22 +40,49 @@ export class LLMService {
     }
   }
 
-  async analyzeContent(content, type = "general") {
+  async analyzeContent(content, type = "general", options = {}) {
     try {
-      const prompt =
-        type === "research_paper"
-          ? `You are analyzing a technical research paper. Return ONLY valid JSON with this exact shape:
-{
+      const evidenceMode = Boolean(options?.evidenceMode);
+      const baseShape = evidenceMode
+        ? `{
+  "summary": "string",
+  "keyPoints": ["string"],
+  "evidence": [
+    {
+      "claim": "string",
+      "quote": "string",
+      "confidence": "high|medium|low"
+    }
+  ],
+  "importantConcepts": ["string"],
+  "practicalApplications": ["string"],
+  "discussionQuestions": ["string"]
+}`
+        : `{
   "summary": "string",
   "keyPoints": ["string"],
   "importantConcepts": ["string"],
   "practicalApplications": ["string"],
   "discussionQuestions": ["string"]
-}
+}`;
+
+      const evidenceRules = evidenceMode
+        ? `
+- evidence must contain 3-6 entries.
+- quote must be a verbatim excerpt from the provided content.
+- each claim should be directly supported by its quote.
+- confidence must be one of: high, medium, low.`
+        : "";
+
+      const prompt =
+        type === "research_paper"
+          ? `You are analyzing a technical research paper. Return ONLY valid JSON with this exact shape:
+${baseShape}
 
 Requirements:
 - summary must be very detailed (350-500 words), technically accurate, and easy to follow.
 - keyPoints must contain 6-10 concrete takeaways.
+${evidenceRules}
 - importantConcepts must contain 5-8 concept+definition bullets.
 - practicalApplications must contain 4-7 real-world applications.
 - discussionQuestions must contain 4-6 thought-provoking questions.
@@ -64,17 +91,12 @@ Requirements:
 Content:
 ${content}`
           : `You are analyzing general technical content. Return ONLY valid JSON with this exact shape:
-{
-  "summary": "string",
-  "keyPoints": ["string"],
-  "importantConcepts": ["string"],
-  "practicalApplications": ["string"],
-  "discussionQuestions": ["string"]
-}
+${baseShape}
 
 Requirements:
 - summary must be very detailed (300-450 words), clear, and structured.
 - keyPoints must contain 6-10 concrete takeaways.
+${evidenceRules}
 - importantConcepts must contain 4-7 concept+definition bullets.
 - practicalApplications must contain 3-6 real-world applications.
 - discussionQuestions must contain 3-5 thought-provoking questions.

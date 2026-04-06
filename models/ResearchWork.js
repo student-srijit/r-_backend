@@ -39,6 +39,27 @@ const researchWorkSchema = new mongoose.Schema(
             default: null,
           },
           keyPoints: [String],
+          evidence: [
+            {
+              claim: {
+                type: String,
+                default: null,
+              },
+              quote: {
+                type: String,
+                default: null,
+              },
+              sourceUrl: {
+                type: String,
+                default: null,
+              },
+              confidence: {
+                type: String,
+                enum: ["high", "medium", "low"],
+                default: "medium",
+              },
+            },
+          ],
           importantConcepts: [String],
           practicalApplications: [String],
           discussionQuestions: [String],

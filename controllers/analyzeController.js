@@ -7,8 +7,15 @@ import { registerAnalyzeEvent } from "./discoverController.js";
 
 export const analyzeLink = async (req, res, next) => {
   try {
-    const { researchWorkId, linkUrl, apiKey, provider, model, baseUrl } =
-      req.body;
+    const {
+      researchWorkId,
+      linkUrl,
+      apiKey,
+      provider,
+      model,
+      baseUrl,
+      evidenceMode = false,
+    } = req.body;
 
     // Validate input
     if (!researchWorkId || !linkUrl || !apiKey || !provider || !model) {
@@ -52,6 +59,7 @@ export const analyzeLink = async (req, res, next) => {
     const analysisResponse = await llmService.analyzeContent(
       parsedContent.content,
       contentType === "paper" ? "research_paper" : "general",
+      { evidenceMode: Boolean(evidenceMode) },
     );
 
     const cleanText = (value = "") =>
@@ -65,8 +73,111 @@ export const analyzeLink = async (req, res, next) => {
         .slice(0, max);
     };
 
+    const normalizedSourceText = cleanText(parsedContent.content)
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+
+    const sourceSentences = cleanText(parsedContent.content)
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => cleanText(sentence))
+      .filter((sentence) => sentence.length >= 60)
+      .slice(0, 200);
+
+    const normalizeConfidence = (value) => {
+      const parsed = String(value || "medium").toLowerCase().trim();
+      if (["high", "medium", "low"].includes(parsed)) return parsed;
+      return "medium";
+    };
+
+    const verifyQuote = (quote) => {
+      const cleanQuote = cleanText(quote)
+        .replace(/["'`]/g, "")
+        .replace(/\s+/g, " ");
+      if (!cleanQuote || cleanQuote.length < 18) return null;
+
+      const normalizedQuote = cleanQuote.toLowerCase();
+      if (normalizedSourceText.includes(normalizedQuote)) {
+        return cleanQuote;
+      }
+
+      const shortened = cleanQuote.slice(0, 180).trim();
+      if (shortened.length >= 18 && normalizedSourceText.includes(shortened.toLowerCase())) {
+        return shortened;
+      }
+
+      return null;
+    };
+
+    const scoreSentenceMatch = (sentence, claim) => {
+      const claimTokens = cleanText(claim)
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((token) => token.length >= 4);
+
+      if (!claimTokens.length) return 0;
+
+      const sentenceText = sentence.toLowerCase();
+      return claimTokens.reduce(
+        (score, token) => score + (sentenceText.includes(token) ? 1 : 0),
+        0,
+      );
+    };
+
+    const normalizeEvidenceItems = (value, max = 6) => {
+      if (!Array.isArray(value)) return [];
+
+      return value
+        .map((item) => {
+          const claim = cleanText(
+            item?.claim || item?.statement || item?.point || item?.keyPoint,
+          );
+          const quote = verifyQuote(
+            item?.quote || item?.evidenceQuote || item?.sourceQuote,
+          );
+
+          if (!claim || !quote) return null;
+
+          return {
+            claim,
+            quote,
+            sourceUrl: linkUrl,
+            confidence: normalizeConfidence(item?.confidence),
+          };
+        })
+        .filter(Boolean)
+        .slice(0, max);
+    };
+
+    const buildFallbackEvidence = (claims, max = 4) => {
+      if (!Array.isArray(claims) || !claims.length || !sourceSentences.length) {
+        return [];
+      }
+
+      return claims
+        .slice(0, max)
+        .map((claim) => {
+          const bestMatch = sourceSentences
+            .map((sentence) => ({
+              sentence,
+              score: scoreSentenceMatch(sentence, claim),
+            }))
+            .sort((a, b) => b.score - a.score)[0];
+
+          if (!bestMatch || bestMatch.score < 2) return null;
+
+          return {
+            claim: cleanText(claim),
+            quote: bestMatch.sentence,
+            sourceUrl: linkUrl,
+            confidence: "medium",
+          };
+        })
+        .filter(Boolean);
+    };
+
     let summary = "";
     let keyPoints = [];
+    let evidence = [];
     let importantConcepts = [];
     let practicalApplications = [];
     let discussionQuestions = [];
@@ -84,6 +195,10 @@ export const analyzeLink = async (req, res, next) => {
       keyPoints = normalizeList(
         analysisResponse.keyPoints || analysisResponse.mainTakeaways,
         10,
+      );
+      evidence = normalizeEvidenceItems(
+        analysisResponse.evidence || analysisResponse.citations,
+        6,
       );
       importantConcepts = normalizeList(
         analysisResponse.importantConcepts ||
@@ -126,6 +241,10 @@ export const analyzeLink = async (req, res, next) => {
         .slice(0, 8);
     }
 
+    if (Boolean(evidenceMode) && evidence.length === 0) {
+      evidence = buildFallbackEvidence(keyPoints, 5);
+    }
+
     if (!summary) {
       throw new Error(
         "Model returned an incomplete analysis. Please try again.",
@@ -138,6 +257,12 @@ export const analyzeLink = async (req, res, next) => {
       );
     }
 
+    if (Boolean(evidenceMode) && evidence.length === 0) {
+      throw new Error(
+        "Evidence lock could not verify source-backed quotes. Please retry with a richer source.",
+      );
+    }
+
     // Find the link in the research work and update it
     const linkIndex = research.links.findIndex((l) => l.url === linkUrl);
 
@@ -145,6 +270,7 @@ export const analyzeLink = async (req, res, next) => {
       research.links[linkIndex].analysis = {
         summary,
         keyPoints,
+        evidence,
         importantConcepts,
         practicalApplications,
         discussionQuestions,
@@ -160,6 +286,7 @@ export const analyzeLink = async (req, res, next) => {
         analysis: {
           summary,
           keyPoints,
+          evidence,
           importantConcepts,
           practicalApplications,
           discussionQuestions,
@@ -186,9 +313,11 @@ export const analyzeLink = async (req, res, next) => {
         analysis: {
           summary,
           keyPoints,
+          evidence,
           importantConcepts,
           practicalApplications,
           discussionQuestions,
+          evidenceMode: Boolean(evidenceMode),
         },
       },
     });
